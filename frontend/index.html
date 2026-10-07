@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>One Line to Video · AI 视频工作台</title>
+  <link rel="stylesheet" href="/ui/styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">✦</div>
+        <div><strong>Storyboard</strong><span>AI VIDEO LAB</span></div>
+      </div>
+      <div class="side-section-label">工作台</div>
+      <button class="side-link active"><span>▦</span> 新建视频</button>
+      <button class="side-link" id="loadLatest"><span>↻</span> 恢复最近任务</button>
+      <div class="side-footer">
+        <div class="provider-dot"><i></i><span>Agent pipeline ready</span></div>
+        <p>资料检索、剧本、分镜、配音与视频生成。</p>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <div>
+          <div class="eyebrow">AI VIDEO WORKSPACE</div>
+          <h1>把一句话，变成一段会讲故事的视频。</h1>
+          <p class="subtitle">先用结构化脚本和分镜规划，再交给 AI 视频模型生成镜头。</p>
+        </div>
+        <div class="top-actions"><span class="status-pill"><i></i> 本地工作台</span></div>
+      </header>
+
+      <section class="hero-card">
+        <div class="hero-copy">
+          <span class="hero-kicker">PROMPT → STORYBOARD → VIDEO</span>
+          <h2>从一个主题开始，<em>让画面自己推进。</em></h2>
+          <p>可选联网搜集资料，生成并反思剧本、规划分镜，再并行生成 AI 视频镜头、配音并合成 MP4。</p>
+        </div>
+        <div class="hero-orbit"><span class="orbit-core">AI</span><span class="orbit-dot d1">✦</span><span class="orbit-dot d2">▶</span><span class="orbit-dot d3">Aa</span></div>
+      </section>
+
+      <section class="pipeline-card">
+        <div class="section-head"><div><span class="section-label">RUN PIPELINE</span><h3>执行轨迹</h3></div><span id="jobStatus" class="job-status">等待输入</span></div>
+        <div id="pipeline" class="pipeline"><div class="empty-line">创建一个主题后，这里会显示每个 LangGraph 节点的状态。</div></div>
+      </section>
+
+      <section class="result-card">
+        <div class="section-head"><div><span class="section-label">OUTPUT</span><h3>视频预览</h3></div><span id="resultMeta" class="muted">尚未生成</span></div>
+        <div id="resultEmpty" class="result-empty"><div class="play-placeholder">▶</div><strong>你的成片会出现在这里</strong><span>建议先用 Mock 模式确认流程，再接入真实视频模型。</span></div>
+        <video id="preview" class="preview" controls playsinline hidden></video>
+        <div id="scenes" class="scenes"></div>
+      </section>
+    </main>
+
+    <aside class="inspector">
+      <section class="composer panel">
+        <div class="panel-title"><span class="section-label">NEW STORYBOARD</span><span class="tiny-badge">60 SEC</span></div>
+        <label for="prompt">你想讲什么？</label>
+        <textarea id="prompt" placeholder="例如：手机是如何从大哥大发展到智能手机的？">互联网是如何从 ARPANET 发展到移动互联网的？</textarea>
+        <div class="suggestions">
+          <button data-prompt="手机是如何从大哥大发展到智能手机的？">手机发展史</button>
+          <button data-prompt="电子游戏是如何从街机发展到开放世界的？">游戏发展史</button>
+          <button data-prompt="人工智能是如何从专家系统发展到大模型的？">AI 发展史</button>
+        </div>
+        <div class="field-row"><div><label for="duration">视频时长</label><select id="duration"><option value="30">30 秒</option><option value="60">60 秒</option></select></div><div><label>画幅</label><div class="locked-field">9:16 竖屏</div></div></div>
+        <div class="field-row"><div><label for="llmProvider">剧本 API</label><select id="llmProvider"></select></div><div><label for="llmModel">文本模型</label><select id="llmModel"></select></div></div>
+        <div class="field-row"><div><label for="researchProvider">资料网站</label><select id="researchProvider"></select></div><div><label for="researchEnabled">自动搜集资料</label><select id="researchEnabled"><option value="true">开启</option><option value="false">关闭</option></select></div></div>
+        <div class="field-row"><div><label for="videoProvider">视频 Provider</label><select id="videoProvider"></select></div><div><label for="videoModel">视频模型</label><select id="videoModel"></select></div></div>
+        <div class="field-row"><div><label for="videoInputMode">生成方式</label><select id="videoInputMode"><option value="t2v">纯文生视频（推荐）</option><option value="i2v">首帧图生视频</option></select></div><div><label for="videoGpuPool">GPU 调度</label><select id="videoGpuPool"><option value="2">GPU 2</option><option value="3">GPU 3</option><option value="2,3">GPU 2 + 3 并行</option></select></div></div>
+        <div class="field-row"><div><label for="videoConcurrency">并发数</label><select id="videoConcurrency"><option value="1">1（串行）</option><option value="2">2（双卡并行）</option></select></div><div><label for="ttsProvider">旁白 TTS</label><select id="ttsProvider"></select></div></div>
+        <button id="createBtn" class="primary-btn"><span>生成视频</span><b>↗</b></button>
+        <p id="providerHint" class="hint">正在读取可用模型…</p>
+      </section>
+
+      <section class="run-card panel">
+        <div class="panel-title"><span class="section-label">RUN INSPECTOR</span><span id="jobId" class="tiny-id">NO JOB</span></div>
+        <div class="metrics"><div><span>状态</span><strong id="metricStatus">—</strong></div><div><span>当前节点</span><strong id="metricStage">—</strong></div><div><span>Token</span><strong id="metricTokens">0</strong></div></div>
+        <div class="log-head"><span>LIVE LOGS</span><button id="clearLogs">清空</button></div>
+        <div id="logs" class="logs"><div class="log-empty">等待任务启动…</div></div>
+      </section>
+    </aside>
+  </div>
+  <script src="/ui/app.js"></script>
+</body>
+</html>
