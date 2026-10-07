@@ -218,13 +218,26 @@ class IndexTTSTTSAdapter:
     def _first_voice_id(self) -> str:
         voices = self._json_request("GET", "/api/voices")
         if isinstance(voices, dict):
-            voices = voices.get("voices") or voices.get("items") or []
-        if not voices:
+            values = voices.get("voices") or voices.get("items")
+            if values is None:
+                values = []
+                for key in ("presets", "saved"):
+                    entries = voices.get(key)
+                    if isinstance(entries, list):
+                        values.extend(entries)
+            voices = values
+        if not isinstance(voices, list):
             return ""
-        first = voices[0]
-        if isinstance(first, str):
-            return first
-        return str(first.get("voice_id") or first.get("id") or "")
+        for voice in voices:
+            if isinstance(voice, str) and voice.strip():
+                return voice.strip()
+            if isinstance(voice, dict):
+                voice_id = str(
+                    voice.get("voice_id") or voice.get("id") or voice.get("key") or ""
+                ).strip()
+                if voice_id:
+                    return voice_id
+        return ""
 
     def _json_request(self, method: str, path: str, payload: dict | None = None) -> dict:
         import json

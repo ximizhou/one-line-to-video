@@ -92,6 +92,11 @@ async def _probe_duration(path: str) -> float | None:
     return d if d > 0 else None
 
 
+async def probe_duration_safe(path: str) -> float | None:
+    """Return a media duration when ffprobe can decode the file, else ``None``."""
+    return await _probe_duration(path)
+
+
 # --------------------------------------------------------------------------- #
 # Fallback: plain concat of pre-captioned stills (no motion)
 # --------------------------------------------------------------------------- #
@@ -168,6 +173,58 @@ async def concat_video_clips(clips: list[str], output_path: str) -> str:
         str(out),
     ])
     log.info("Concatenated %d provider video clips -> %s", len(clips), out)
+    return str(out)
+
+
+async def burn_caption_overlays(
+    video_path: str,
+    overlays: list[tuple[str, float, float]],
+    output_path: str,
+) -> str:
+    """Burn per-scene transparent caption PNGs over a provider film.
+
+    ``overlays`` contains ``(png_path, start_seconds, end_seconds)``.  Using
+    transparent PNGs keeps Chinese font rendering in Pillow, instead of relying
+    on a host-specific ffmpeg font installation.  The original video is silent at
+    this point; narration is muxed afterwards, so this function never duplicates
+    or drops audio.
+    """
+    if not overlays:
+        return video_path
+    if not ffmpeg_available():
+        raise VideoAssemblyError("ffmpeg not found on PATH. Install ffmpeg.")
+    if not Path(video_path).is_file():
+        raise VideoAssemblyError(f"caption source video missing: {video_path}")
+    for overlay, start, end in overlays:
+        if not Path(overlay).is_file() or end <= start:
+            raise VideoAssemblyError(f"invalid caption overlay: {overlay}")
+
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    inputs = ["-i", str(Path(video_path).resolve())]
+    filters = ["[0:v]setpts=PTS-STARTPTS[v0]"]
+    current = "v0"
+    for index, (overlay, start, end) in enumerate(overlays):
+        # Each PNG is looped only as an overlay source. The video itself is never
+        # looped; shortest=1 keeps the composed stream at the source duration.
+        inputs += ["-loop", "1", "-framerate", "30", "-i", str(Path(overlay).resolve())]
+        cap = f"cap{index}"
+        nxt = f"v{index + 1}"
+        filters.append(f"[{index + 1}:v]format=rgba[{cap}]")
+        filters.append(
+            f"[{current}][{cap}]overlay=0:0:enable='between(t,{start:.3f},{end:.3f})':"
+            f"eof_action=repeat:shortest=1[{nxt}]"
+        )
+        current = nxt
+
+    await _run_ffmpeg([
+        "ffmpeg", "-y", *inputs,
+        "-filter_complex", ";".join(filters),
+        "-map", f"[{current}]",
+        "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart", str(out),
+    ])
+    log.info("Burned %d provider-scene caption overlay(s) -> %s", len(overlays), out)
     return str(out)
 
 

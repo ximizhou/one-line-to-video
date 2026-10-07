@@ -78,6 +78,7 @@ async function createJob() {
       video_gpu_pool: $("videoGpuPool").value || null,
       video_max_concurrency: Number($("videoConcurrency").value || "1"),
       tts_provider: $("ttsProvider").value || "none",
+      tts_voice: $("ttsVoice").value || null,
     }) });
     const data = await response.json(); if (!response.ok) throw new Error(data.detail || "创建任务失败");
     state.jobId = data.job_id; $("jobId").textContent = data.job_id; setStatus(data.status); addLog("system", `任务 ${data.job_id} 已创建`); connectEvents(); await refreshJob(); state.timer = setInterval(refreshJob, 1500);
@@ -143,6 +144,16 @@ async function loadProviders() {
     const ttsSelect = $("ttsProvider");
     ttsSelect.innerHTML = (state.providers.tts || []).map((profile) => `<option value="${escapeHtml(profile.id)}">${escapeHtml(profile.label)}</option>`).join("");
     ttsSelect.value = defaults.tts_provider || "none";
+    const voiceSelect = $("ttsVoice");
+    const voices = state.providers.tts_voices || [];
+    voiceSelect.innerHTML = `<option value="">自动选择（服务端默认）</option>` + voices.map((voice) => {
+      const detail = [voice.description, voice.language].filter(Boolean).join(" · ");
+      const label = detail ? `${voice.label || voice.id}（${detail}）` : (voice.label || voice.id);
+      return `<option value="${escapeHtml(voice.id)}">${escapeHtml(label)}</option>`;
+    }).join("");
+    if (defaults.tts_voice_id && [...voiceSelect.options].some((option) => option.value === defaults.tts_voice_id)) {
+      voiceSelect.value = defaults.tts_voice_id;
+    }
   } catch (error) {
     $("providerHint").textContent = "provider 列表不可用，回退到 Mock。";
     addLog("ui", error.message, "error");

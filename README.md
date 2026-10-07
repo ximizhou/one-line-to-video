@@ -30,7 +30,7 @@ POST /storyboard/{id}/resume  ─▶ resume idempotently from saved artifacts
 graph TD
   start -->|research on| research --> script_writer
   start -->|research off| script_writer
-  script_writer --> reflection --> designer --> video_gen --> assembler --> end
+  script_writer --> reflection --> designer --> video_gen --> assembler --> pipeline_end([Done])
 ```
 
 **Narrative consistency:** `designer` creates a style bible and self-contained shot prompts. The active pipeline generates video clips directly; legacy image/motion stages remain available for compatibility.
@@ -42,11 +42,70 @@ graph TD
 
 The repository includes a static visual workspace served by FastAPI. It lets you choose the LLM/model, research source, video provider/model, H3 text/image mode, GPU scheduling, and TTS provider from the UI. Seedance remains an adapter placeholder until its API protocol is supplied.
 
-```bash
-uvicorn app.main:app --reload
+### UI-only preview (no database or model services)
+
+Run the following from the repository root in PowerShell. If `.venv` has not
+been created yet, install the Python dependencies first:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 ```
 
-Open **http://localhost:8000/ui/** (or simply **http://localhost:8000/**).
+To inspect the interface and provider/model selectors without PostgreSQL,
+API keys, an SSH tunnel, a video GPU, or a TTS service:
+
+```powershell
+$env:USE_MOCK_PROVIDERS = "true"
+$env:LLM_PROVIDER = "mock"
+$env:VIDEO_PROVIDER = "mock"
+$env:RESEARCH_ENABLED = "false"
+$env:ENABLE_TTS = "false"
+
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --lifespan off
+```
+
+Keep the terminal open and visit **http://127.0.0.1:8000/ui/**.
+Press **Ctrl+C** to stop the preview. If port 8000 is busy, use `--port 8001`
+and open **http://127.0.0.1:8001/ui/** instead.
+
+> **Preview only:** `--lifespan off` skips the database-dependent startup hooks;
+> it does not initialize or repair the database. Do not submit generation jobs
+> or load existing jobs in this mode. Job submission, progress/log streaming,
+> and video generation require a healthy, initialized database. Do not use this
+> flag for normal operation or deployment.
+
+### Full application (task submission and generation)
+
+Stop the preview, then use a fresh PowerShell terminal so its Mock-only
+settings do not override your normal provider configuration. Run from the
+repository root with the Python dependencies installed. Docker must be running.
+
+These commands use the local development database defined in
+`docker-compose.yml`. For an existing PostgreSQL instance, set `DATABASE_URL`
+to your own connection URL and skip the Docker command instead.
+
+```powershell
+$env:DATABASE_URL = "postgresql+asyncpg://storyboard:storyboard@127.0.0.1:5432/storyboard"
+
+docker compose up -d --wait
+if ($LASTEXITCODE -ne 0) { throw "PostgreSQL did not become healthy." }
+
+.\.venv\Scripts\python.exe -m alembic upgrade head
+if ($LASTEXITCODE -ne 0) { throw "Database migration failed." }
+
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+Open **http://127.0.0.1:8000/ui/** after application startup completes.
+`--wait` requires a Docker Compose version that supports it and waits for the
+Postgres healthcheck before migrations run. If it is unavailable, run
+`docker compose up -d`, then check `docker compose ps` until Postgres is
+`healthy` before running Alembic and Uvicorn.
+
+Mock providers can exercise the workflow without external model services;
+real generation additionally requires the selected providers' API keys and/or
+reachable video/TTS endpoints. Keys stay in the server environment, not the UI.
 
 The UI can:
 
@@ -56,7 +115,7 @@ The UI can:
 - display token usage and job status;
 - preview the final MP4 and each generated scene clip;
 - choose the LLM/model and research website;
-- choose the video provider/model, text/image mode, GPU pool (`GPU 2`, `GPU 3`, or `GPU 2 + 3`), concurrency, and TTS provider.
+- choose the video provider/model, text/image mode, GPU pool (`GPU 2`, `GPU 3`, or `GPU 2 + 3`), concurrency, TTS provider, and (when IndexTTS is reachable) the narration voice.
 
 The active media graph is now:
 
@@ -72,7 +131,18 @@ resulting WebM before the local assembler creates the final MP4. Switching
 
 TTS is disabled by default. Set `ENABLE_TTS=true` and choose `TTS_PROVIDER=indextts`
 for the existing IndexTTS workbench (or `gemini` for the old cloud adapter). The IndexTTS
-client follows its explicit create -> start -> poll -> download protocol.
+client follows its explicit create -> start -> poll -> download protocol. When the workbench
+`/api/voices` endpoint is reachable, the UI loads built-in and saved voices and sends the
+selected `tts_voice` with the job; leaving it on auto uses the first available workbench voice.
+For Chinese history/science narration, prefer a saved voice marked as a natural/reading style
+(for example, the prepared server has a saved voice named “黄轩朗读”).
+
+Provider-video assembly has one timeline: clips are trimmed or padded with the final frame,
+never looped from the beginning, and the same scene holds drive subtitles and narration. The
+assembler writes `subtitles.srt` and burns the captions into the MP4, so a short provider clip
+will not replay its action with a silent second pass. Keep `VIDEO_FRAMES=0` to derive the H3
+frame count from `VIDEO_CLIP_SECONDS`; a manually low frame count can otherwise make the
+provider return a clip shorter than the requested hold.
 
 ### Remote/local video workbench
 
@@ -107,8 +177,8 @@ cp .env.example .env
 #   - For this demo, expose the DeepSeek key to the server as the environment variable dsh.
 #   - The UI selects providers/models but never accepts or displays API keys.
 
-# 4. Start Postgres (pgAdmin 4: host=localhost port=5432 user/pass/db=storyboard)
-docker compose up -d
+# 4. Start Postgres and wait for its healthcheck
+docker compose up -d --wait
 
 # 5. Create schema
 alembic upgrade head

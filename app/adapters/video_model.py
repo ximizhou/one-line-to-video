@@ -314,7 +314,15 @@ def available_video_profiles(settings: Settings) -> list[dict[str, Any]]:
 
 
 async def _normalize_video_bytes(data: bytes, duration_seconds: float) -> bytes:
-    """Retiming/looping makes provider clips honor the storyboard duration hint."""
+    """Make one provider clip exactly ``duration_seconds`` without replaying it.
+
+    H3 can return a clip shorter than the requested storyboard hold when its frame
+    count is configured too low (for example 72 frames for a 6-second request).
+    The old ``-stream_loop -1`` workaround replayed the same action, which made each
+    shot visibly happen twice while narration was only spoken once.  We now trim
+    long clips and hold the final frame for short clips.  The caller can separately
+    choose an appropriate frame count to obtain a full-length moving clip.
+    """
     if duration_seconds <= 0:
         return data
     import tempfile
@@ -322,8 +330,16 @@ async def _normalize_video_bytes(data: bytes, duration_seconds: float) -> bytes:
         source = Path(tmp) / "source.webm"
         output = Path(tmp) / "normalized.mp4"
         source.write_bytes(data)
+        # tpad only contributes frames after the source ends; trim then makes the
+        # result exactly target length. There is no loop, so a short source cannot
+        # restart its opening animation.
+        filter_graph = (
+            f"tpad=stop_mode=clone:stop_duration={duration_seconds:.3f},"
+            f"trim=duration={duration_seconds:.3f},setpts=PTS-STARTPTS"
+        )
         cmd = [
-            "ffmpeg", "-y", "-stream_loop", "-1", "-i", str(source),
+            "ffmpeg", "-y", "-i", str(source),
+            "-vf", filter_graph,
             "-t", f"{duration_seconds:.3f}", "-an", "-c:v", "libx264",
             "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(output),
         ]

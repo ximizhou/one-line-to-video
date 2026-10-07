@@ -34,10 +34,12 @@ from app.adapters.tts import concat_wavs, silent_wav, wav_duration_seconds
 from app.adapters.video import (
     assemble_kenburns,
     assemble_video,
+    burn_caption_overlays,
     concat_video_clips,
     build_narration_track,
     concat_offsets,
     mux_audio,
+    probe_duration_safe as _probe_duration_safe,
     xfade_offsets,
 )
 from app.core.images import burn_caption, render_caption_overlay
@@ -45,6 +47,32 @@ from app.core.logging import get_logger
 from app.graph.state import Deps, StoryboardState
 
 log = get_logger(__name__)
+
+
+def _srt_timestamp(seconds: float) -> str:
+    """Format seconds as the UTF-8 SRT timestamp used by the UI/download."""
+    total_ms = max(0, int(round(seconds * 1000)))
+    hours, rem = divmod(total_ms, 3_600_000)
+    minutes, rem = divmod(rem, 60_000)
+    secs, millis = divmod(rem, 1000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+
+
+def _save_provider_subtitles(store, clips, holds: list[float], offsets: list[float]) -> str:
+    """Save one downloadable SRT matching the direct-video concat timeline."""
+    rows: list[str] = []
+    for index, (clip, hold, offset) in enumerate(zip(clips, holds, offsets), start=1):
+        caption = str(clip.get("caption") or "").strip()
+        if not caption:
+            continue
+        rows.extend([
+            str(index),
+            f"{_srt_timestamp(offset)} --> {_srt_timestamp(offset + hold)}",
+            caption,
+            "",
+        ])
+    # BOM + CRLF makes the Chinese subtitle file open correctly in common players.
+    return store.save_bytes("subtitles.srt", ("\ufeff" + "\r\n".join(rows)).encode("utf-8"))
 
 
 async def _assemble_provider_clips(
@@ -68,14 +96,36 @@ async def _assemble_provider_clips(
     if degraded:
         warnings.append(f"assembler: {degraded} generated clip(s) were degraded")
 
+    # Direct provider clips used to skip the caption path entirely.  Burn a fixed
+    # subtitle overlay per scene and also expose the same timing as SRT.
+    holds = [max(0.5, float(c.get("duration_seconds") or 1.0)) for c in valid]
+    offsets = concat_offsets(holds)
+    overlays: list[tuple[str, float, float]] = []
+    for clip, offset, hold in zip(valid, offsets, holds):
+        overlay = deps.store.save_bytes(
+            f"caption_overlay_{clip['order']:02d}.png",
+            render_caption_overlay(str(clip.get("caption") or "")),
+        )
+        overlays.append((overlay, offset, offset + hold))
+    _save_provider_subtitles(deps.store, valid, holds, offsets)
+    # Test doubles may write a marker instead of a real MP4; skip the visual pass
+    # for those, while production outputs always pass ffprobe and get subtitles.
+    if await _probe_duration_safe(output_path) is not None:
+        captioned_path = str(deps.store.job_dir / "storyboard_captioned.mp4")
+        try:
+            await burn_caption_overlays(output_path, overlays, captioned_path)
+            os.replace(captioned_path, output_path)
+        except Exception as exc:  # noqa: BLE001 - captions must not kill a video job
+            log.warning("provider subtitles could not be burned (%s); SRT kept", exc)
+            warnings.append(f"assembler: subtitles burned-in failed ({exc}); SRT kept")
+
     narration_path: str | None = None
     narrating = deps.settings.enable_tts and deps.tts is not None
     if narrating:
-        beat_audio, warns = await _synthesize_beats(clips, deps)
+        beat_audio, warns = await _synthesize_beats(valid, deps)
         warnings.extend(warns)
-        holds = [max(0.5, float(c.get("duration_seconds") or 1.0)) for c in valid]
         narration_path = await _add_synced_voiceover(
-            beat_audio, concat_offsets(holds), deps, output_path, warnings
+            beat_audio, offsets, deps, output_path, warnings
         )
     elif deps.settings.enable_tts:
         warnings.append("assembler: TTS is enabled but no TTS adapter is configured")

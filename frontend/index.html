@@ -70,6 +70,7 @@
         <div class="field-row"><div><label for="videoProvider">视频 Provider</label><select id="videoProvider"></select></div><div><label for="videoModel">视频模型</label><select id="videoModel"></select></div></div>
         <div class="field-row"><div><label for="videoInputMode">生成方式</label><select id="videoInputMode"><option value="t2v">纯文生视频（推荐）</option><option value="i2v">首帧图生视频</option></select></div><div><label for="videoGpuPool">GPU 调度</label><select id="videoGpuPool"><option value="2">GPU 2</option><option value="3">GPU 3</option><option value="2,3">GPU 2 + 3 并行</option></select></div></div>
         <div class="field-row"><div><label for="videoConcurrency">并发数</label><select id="videoConcurrency"><option value="1">1（串行）</option><option value="2">2（双卡并行）</option></select></div><div><label for="ttsProvider">旁白 TTS</label><select id="ttsProvider"></select></div></div>
+        <div class="field-row"><div><label for="ttsVoice">旁白音色</label><select id="ttsVoice"><option value="">自动选择（服务端默认）</option></select></div><div class="field-note">IndexTTS 服务在线时会加载可选音色；推荐先试“黄轩朗读”。</div></div>
         <button id="createBtn" class="primary-btn"><span>生成视频</span><b>↗</b></button>
         <p id="providerHint" class="hint">正在读取可用模型…</p>
       </section>

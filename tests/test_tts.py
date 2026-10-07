@@ -36,6 +36,19 @@ def _mock_tts() -> GeminiTTSAdapter:
     return GeminiTTSAdapter(Settings(gemini_api_key="", use_mock_providers=True))
 
 
+def test_indextts_first_voice_supports_workbench_groups(monkeypatch):
+    adapter = IndexTTSTTSAdapter(Settings(tts_base_url="http://tts.test"))
+    monkeypatch.setattr(
+        adapter,
+        "_json_request",
+        lambda *_args, **_kwargs: {
+            "presets": [{"id": "preset-1", "name": "官方示例 01"}],
+            "saved": [{"id": "saved-1", "name": "黄轩朗读"}],
+        },
+    )
+    assert adapter._first_voice_id() == "preset-1"
+
+
 def test_indextts_create_start_poll_download(monkeypatch):
     adapter = IndexTTSTTSAdapter(Settings(tts_base_url="http://tts.test", video_timeout_seconds=10))
     calls = []

@@ -16,6 +16,7 @@ import asyncio
 import json
 import mimetypes
 import os
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -51,6 +52,89 @@ from app.workers.runner import run_job
 router = APIRouter(prefix="/storyboard", tags=["storyboard"])
 
 
+def _normalise_tts_voices(payload: object) -> list[dict[str, str]]:
+    """Convert IndexTTS voice payloads into safe, UI-facing metadata.
+
+    The workbench has returned both ``voices`` and ``items`` wrappers across
+    versions, and voice IDs have appeared as either ``id`` or ``voice_id``.
+    Keep this adapter deliberately permissive while never exposing paths or
+    provider internals to the browser.
+    """
+    if isinstance(payload, dict):
+        values = payload.get("voices") or payload.get("items")
+        if values is None:
+            # IndexTTS workbench currently separates built-in and saved voices.
+            values = []
+            for key in ("presets", "saved"):
+                entries = payload.get(key)
+                if isinstance(entries, list):
+                    values.extend(entries)
+    else:
+        values = payload
+    if not isinstance(values, list):
+        return []
+
+    result: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in values:
+        if isinstance(item, str):
+            voice_id = item.strip()
+            name = voice_id
+            description = ""
+            language = ""
+        elif isinstance(item, dict):
+            voice_id = str(
+                item.get("voice_id") or item.get("id") or item.get("key") or ""
+            ).strip()
+            name = str(item.get("name") or item.get("label") or voice_id).strip()
+            description = str(
+                item.get("description") or item.get("style") or item.get("remark") or ""
+            ).strip()
+            language = str(item.get("language") or item.get("lang") or "").strip()
+        else:
+            continue
+        if not voice_id or voice_id in seen:
+            continue
+        seen.add(voice_id)
+        entry = {"id": voice_id, "label": name or voice_id}
+        if description:
+            entry["description"] = description
+        if language:
+            entry["language"] = language
+        result.append(entry)
+    return result
+
+
+def _fetch_tts_voices_sync(base_url: str, timeout: float) -> object:
+    request = urllib.request.Request(
+        f"{base_url.rstrip('/')}/api/voices",
+        headers={"Accept": "application/json"},
+        method="GET",
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+async def _configured_tts_voices(settings) -> list[dict[str, str]]:
+    """Best-effort voice discovery; a stopped local TTS service must not break UI."""
+    base_url = settings.tts_base_url.strip()
+    if not base_url or settings.use_mock_providers:
+        return []
+    try:
+        # Keep provider discovery snappy when the SSH tunnel/service is down.
+        payload = await asyncio.wait_for(
+            asyncio.to_thread(
+                _fetch_tts_voices_sync,
+                base_url,
+                min(2.5, max(0.5, float(settings.tts_http_timeout_seconds))),
+            ),
+            timeout=3.0,
+        )
+    except Exception:  # noqa: BLE001 - provider discovery is optional
+        return []
+    return _normalise_tts_voices(payload)
+
+
 @router.get("/providers")
 async def get_provider_profiles() -> dict:
     """Safe provider/model metadata for the model switcher UI."""
@@ -67,6 +151,7 @@ async def get_provider_profiles() -> dict:
             "video_gpu_pool": settings.video_gpu_pool,
             "video_max_concurrency": settings.video_max_concurrency,
             "tts_provider": settings.tts_provider if settings.enable_tts else "none",
+            "tts_voice_id": settings.tts_voice_id,
         },
         "llm": available_llm_profiles(settings),
         "research": available_research_profiles(settings),
@@ -76,6 +161,7 @@ async def get_provider_profiles() -> dict:
             {"id": "indextts", "label": "IndexTTS workbench", "configured": bool(settings.tts_base_url.strip())},
             {"id": "gemini", "label": "Gemini TTS", "configured": bool(settings.gemini_api_key.strip())},
         ],
+        "tts_voices": await _configured_tts_voices(settings),
     }
 
 # Per-IP rate limiter for the public create endpoint (registered on the app in

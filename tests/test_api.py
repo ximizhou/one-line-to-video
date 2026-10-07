@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.api.routes import _normalise_tts_voices
 from app.db import repository as repo
 from app.db.session import get_sessionmaker
 from app.main import app
@@ -75,3 +76,21 @@ async def test_get_status_exposes_degraded_artifacts(client):
     assert body["status"] == JobStatus.COMPLETED_WITH_WARNINGS.value
     assert body["warnings"] == ["frame 1: failed"]
     assert any(a["status"] == "degraded" for a in body["artifacts"])
+
+
+def test_tts_voice_payload_is_normalised_for_the_ui():
+    voices = _normalise_tts_voices({
+        "presets": [
+            {"voice_id": "voice-a", "name": "黄轩朗读", "style": "自然、沉稳", "lang": "zh"},
+        ],
+        "saved": [
+            {"id": "voice-b", "label": "备用音色"},
+            {"voice_id": "voice-a", "name": "duplicate"},
+            "voice-c",
+        ],
+    })
+    assert voices == [
+        {"id": "voice-a", "label": "黄轩朗读", "description": "自然、沉稳", "language": "zh"},
+        {"id": "voice-b", "label": "备用音色"},
+        {"id": "voice-c", "label": "voice-c"},
+    ]

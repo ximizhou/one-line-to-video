@@ -68,7 +68,8 @@ class Settings(BaseSettings):
     video_clip_seconds: float = 6.0
     video_max_concurrency: int = 1
     video_max_shots: int = 0
-    video_frames: int = 72
+    # 0 = derive from clip duration (about 24 fps); avoids replaying short H3 clips.
+    video_frames: int = 0
     video_quality: str = "uhd"
     video_steps: int = 8
     video_seed: int | None = None
