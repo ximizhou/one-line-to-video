@@ -144,6 +144,21 @@ will not replay its action with a silent second pass. Keep `VIDEO_FRAMES=0` to d
 frame count from `VIDEO_CLIP_SECONDS`; a manually low frame count can otherwise make the
 provider return a clip shorter than the requested hold.
 
+### Retaining local demos
+
+Jobs and their artifact directories expire **one hour after creation** by default
+(`JOB_TTL_SECONDS=3600`); the background sweeper runs every five minutes. For a
+local demo that will be reviewed later, set `JOB_TTL_SECONDS=604800` (seven days)
+**before starting the service**. Copy accepted MP4/SRT deliverables outside the
+managed `ARTIFACT_ROOT/<job_id>` directory so the task sweeper cannot remove them.
+Do not treat the task cache as permanent media storage.
+
+The reflection reviser receives the original brief, target duration and collected
+sources on every pass. This preserves factual, language, narration-length and
+visual-style constraints instead of optimizing only for a story score. A model
+score is not proof of scientific accuracy: review the script and the rendered
+motions, and regenerate only rejected shots using the cached accepted clips.
+
 ### Remote/local video workbench
 
 The project only needs the workbench HTTP endpoint; deployment and authentication remain outside this repository. Keep the workbench bound to a private interface and expose it locally through your own approved tunnel or network policy.

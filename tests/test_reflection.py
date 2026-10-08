@@ -182,3 +182,31 @@ async def test_mock_mode_below_threshold_loops_and_accepts_best(artifact_root):
     out = await reflection({"script_path": store.abspath("script.json")}, deps)
     report = store.load_json(out["reflection_path"])
     assert report["final_overall"] == 60 and report["met_threshold"] is False
+
+
+async def test_revision_keeps_original_brief_and_research_guardrails(artifact_root):
+    """Reflection must not forget language/timing or factual context from upstream."""
+    class CapturingLLM(_ScriptedLLM):
+        revise_user = ""
+
+        def complete_json(self, **kwargs):
+            if kwargs["response_model"] is Script:
+                self.revise_user = kwargs["user"]
+            return super().complete_json(**kwargs)
+
+    llm = CapturingLLM([50, 95])
+    deps, store = _deps(artifact_root, "ref-context", llm=llm, max_iters=1)
+    _seed(store, _script())
+    store.save_json("research.json", {"sources": [{
+        "title": "Condensation", "snippet": "Water vapor is invisible.",
+        "url": "https://example.org/water-cycle",
+    }]})
+    await reflection({
+        "script_path": store.abspath("script.json"),
+        "prompt": "Chinese narration: maximum 16 characters per scene; no visible steam.",
+        "duration": 30,
+        "research_path": store.abspath("research.json"),
+    }, deps)
+    assert "maximum 16 characters" in llm.revise_user
+    assert "Water vapor is invisible." in llm.revise_user
+    assert "30 seconds" in llm.revise_user
